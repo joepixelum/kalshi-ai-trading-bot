@@ -111,9 +111,12 @@ class LoggingConfig:
 
 # === CAPITAL ALLOCATION ACROSS STRATEGIES ===
 # Allocate capital across different trading approaches
-market_making_allocation: float = 0.40  # 40% for market making (spread profits)
-directional_allocation: float = 0.50    # 50% for directional trading (AI predictions) 
-arbitrage_allocation: float = 0.10      # 10% for arbitrage opportunities
+# UPDATED: Rebalanced to accommodate new crypto momentum strategy
+market_making_allocation: float = 0.32     # 32% for market making (spread profits) - was 40%
+directional_allocation: float = 0.40       # 40% for directional trading (AI predictions) - was 50%
+quick_flip_allocation: float = 0.24        # 24% for quick flip scalping - was 30%
+arbitrage_allocation: float = 0.08         # 8% for arbitrage opportunities - was 10%
+crypto_momentum_allocation: float = 0.20   # 20% for crypto momentum arbitrage - NEW
 
   # === PORTFOLIO OPTIMIZATION SETTINGS ===
 # Kelly Criterion is now the PRIMARY position sizing method (moved to TradingConfig)
@@ -153,6 +156,17 @@ min_spread_for_making: float = 0.01     # DECREASED: Accept smaller spreads (was
 max_inventory_risk: float = 0.15        # INCREASED: Allow higher inventory risk (was 0.10, now 15%)
 order_refresh_minutes: int = 15         # Refresh orders every 15 minutes
 max_orders_per_market: int = 4          # Maximum orders per market (2 each side)
+
+# === CRYPTO MOMENTUM STRATEGY ===
+# Settings for cryptocurrency momentum arbitrage
+crypto_momentum_enabled: bool = True    # Enable crypto momentum strategy
+crypto_momentum_symbols: List[str] = ["BTC", "ETH"]  # Symbols to track
+crypto_momentum_min_confidence: float = 0.70  # Minimum confidence threshold (70%)
+crypto_momentum_entry_window_sec: int = 60   # Enter 60 seconds before hour close
+crypto_momentum_max_positions: int = 8       # Max concurrent crypto positions
+crypto_momentum_win_rate_kill_switch: float = 0.65  # Disable if win rate < 65%
+crypto_momentum_max_daily_loss_pct: float = 0.10    # Stop if lose 10% in a day
+crypto_momentum_scan_interval_sec: int = 5   # Check markets every 5 seconds
 
 # === MARKET SELECTION (ENHANCED FOR MORE OPPORTUNITIES) ===
 # Removed time restrictions - trade ANY deadline with dynamic exits!
