@@ -435,7 +435,9 @@ Provide a brief, factual summary under {max_length//2} words. If no current info
         self,
         market_data: Dict,
         portfolio_data: Dict,
-        news_summary: str = ""
+        news_summary: str = "",
+        strategy: str = "llm_trading",
+        market_id: Optional[str] = None
     ) -> Optional[TradingDecision]:
         """
         Get a trading decision from the AI with improved token management.
@@ -443,20 +445,22 @@ Provide a brief, factual summary under {max_length//2} words. If no current info
         try:
             # First try with full prompt
             decision = await self._get_trading_decision_with_prompt(
-                market_data, portfolio_data, news_summary, use_simplified=False
+                market_data, portfolio_data, news_summary, use_simplified=False,
+                strategy=strategy, market_id=market_id
             )
-            
+
             if decision:
                 return decision
-            
+
             # If that fails, try with simplified prompt
             self.logger.info("Trying simplified prompt for trading decision")
             decision = await self._get_trading_decision_with_prompt(
-                market_data, portfolio_data, news_summary, use_simplified=True
+                market_data, portfolio_data, news_summary, use_simplified=True,
+                strategy=strategy, market_id=market_id
             )
-            
+
             return decision
-            
+
         except Exception as e:
             self.logger.error(f"Error getting trading decision: {str(e)}")
             return None
@@ -466,7 +470,9 @@ Provide a brief, factual summary under {max_length//2} words. If no current info
         market_data: Dict,
         portfolio_data: Dict,
         news_summary: str = "",
-        use_simplified: bool = False
+        use_simplified: bool = False,
+        strategy: str = "llm_trading",
+        market_id: Optional[str] = None
     ) -> Optional[TradingDecision]:
         """
         Get trading decision with either full or simplified prompt.
@@ -476,24 +482,37 @@ Provide a brief, factual summary under {max_length//2} words. If no current info
                 prompt = self._create_simplified_trading_prompt(market_data, portfolio_data, news_summary)
             else:
                 prompt = self._create_full_trading_prompt(market_data, portfolio_data, news_summary)
-            
+
             messages = [{"role": "user", "content": prompt}]
-            
+
             # Use appropriate token limits
             max_tokens = 4000 if use_simplified else None  # Use default for full prompt
-            
+
             response_text, cost = await self._make_completion_request(
                 messages=messages,
                 temperature=0.1,
                 max_tokens=max_tokens
             )
-            
+
             if not response_text:
                 return None
-            
-            # Parse the JSON response
-            return self._parse_trading_decision(response_text)
-            
+
+            # Log the query for analysis
+            decision = self._parse_trading_decision(response_text)
+            if decision:
+                await self._log_query(
+                    strategy=strategy,
+                    query_type="trading_decision",
+                    prompt=prompt[:2000],
+                    response=response_text[:5000],
+                    market_id=market_id or market_data.get('title', 'unknown')[:50],
+                    cost_usd=cost,
+                    confidence_extracted=decision.confidence if hasattr(decision, 'confidence') else None,
+                    decision_extracted=decision.side if hasattr(decision, 'side') else None
+                )
+
+            return decision
+
         except Exception as e:
             self.logger.error(f"Error in _get_trading_decision_with_prompt (simplified={use_simplified}): {str(e)}")
             return None

@@ -100,14 +100,22 @@ def load_performance_data():
             # Get LIVE positions from Kalshi API (not just database)
             positions_response = await kalshi_client.get_positions()
             kalshi_positions = positions_response.get('market_positions', [])
-            
+
+            # Get database positions to match with strategy information
+            db_positions = await db_manager.get_open_positions()
+            db_positions_map = {pos.market_id: pos for pos in db_positions}
+
             # Convert Kalshi positions to simple dictionaries for caching
             positions = []
             for pos in kalshi_positions:
                 if pos.get('position', 0) != 0:  # Only active positions
                     ticker = pos.get('ticker')
                     position_count = pos.get('position', 0)
-                    
+
+                    # Look up strategy from database
+                    db_pos = db_positions_map.get(ticker)
+                    strategy = db_pos.strategy if db_pos and db_pos.strategy else 'unknown'
+
                     # Create a simple dictionary with only serializable types
                     position_dict = {
                         'market_id': str(ticker),
@@ -115,12 +123,12 @@ def load_performance_data():
                         'quantity': int(abs(position_count)),
                         'entry_price': 0.50,  # Will be updated below
                         'timestamp': datetime.now().isoformat(),
-                        'strategy': 'live_sync',
+                        'strategy': strategy,
                         'status': 'open',
                         'stop_loss_price': None,
                         'take_profit_price': None
                     }
-                    
+
                     # Try to get current market price for better accuracy
                     try:
                         market_data = await kalshi_client.get_market(ticker)
@@ -132,7 +140,7 @@ def load_performance_data():
                                 position_dict['entry_price'] = float(market_info.get('no_price', 50) / 100)
                     except:
                         position_dict['entry_price'] = 0.50  # Keep default price as float
-                    
+
                     positions.append(position_dict)
             
             await db_manager.close()

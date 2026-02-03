@@ -199,15 +199,28 @@ class DatabaseManager(TradingLoggerMixin):
             """)
             
             await db.execute("""
-                UPDATE trade_logs 
-                SET strategy = 'directional_trading' 
+                UPDATE trade_logs
+                SET strategy = 'directional_trading'
                 WHERE strategy IS NULL AND (
                     rationale LIKE 'High-confidence%' OR
                     rationale LIKE '%near-expiry%' OR
                     rationale LIKE '%decision%'
                 )
             """)
-            
+
+            # Set any remaining NULL strategies to 'llm_trading' (catch-all for LLM-based decisions)
+            await db.execute("""
+                UPDATE positions
+                SET strategy = 'llm_trading'
+                WHERE strategy IS NULL
+            """)
+
+            await db.execute("""
+                UPDATE trade_logs
+                SET strategy = 'llm_trading'
+                WHERE strategy IS NULL
+            """)
+
             self.logger.info("Migrated existing position/trade data with strategy information")
             
         except Exception as e:

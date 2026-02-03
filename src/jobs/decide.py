@@ -132,7 +132,9 @@ async def make_decision_for_market(
                 decision = await xai_client.get_trading_decision(
                     market_data={"title": market.title, "yes_price": market.yes_price},
                     portfolio_data=portfolio_data,
-                    news_summary=news_summary
+                    news_summary=news_summary,
+                    strategy="directional_trading",
+                    market_id=market.market_id
                 )
                 
                 # Estimate cost for high-confidence analysis (typically lower due to shorter prompts)
@@ -236,6 +238,8 @@ async def make_decision_for_market(
             market_data=market_data,
             portfolio_data=portfolio_data,
             news_summary=news_summary,
+            strategy="llm_trading",
+            market_id=market.market_id
         )
 
         # Estimate decision cost (this should come from the XAI client in the future)
@@ -389,7 +393,8 @@ async def make_decision_for_market(
                     rationale=rationale,
                     confidence=confidence,
                     live=False,
-                    
+                    strategy="llm_trading",
+
                     # Enhanced exit strategy fields using Grok4 recommendations
                     stop_loss_price=exit_strategy['stop_loss_price'],
                     take_profit_price=exit_strategy['take_profit_price'],
