@@ -1235,11 +1235,14 @@ async def _get_fast_ai_prediction(
         Focus on: probability estimate and your confidence level.
         """
         
-        # Use AI analysis for portfolio optimization - higher tokens for reasoning models  
+        # Use AI analysis for portfolio optimization - higher tokens for reasoning models
         response_text = await xai_client.get_completion(
             prompt,
             max_tokens=3000,  # Higher for reasoning models like grok-4
-            temperature=0.1   # Low temperature for consistency
+            temperature=0.1,   # Low temperature for consistency
+            strategy="portfolio_optimization",
+            query_type="quick_prediction",
+            market_id=market.market_id
         )
         
         # Check if AI response is None (API exhausted or failed)
