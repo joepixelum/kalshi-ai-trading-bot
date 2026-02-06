@@ -132,8 +132,8 @@ class AdvancedMarketMaker:
                 current_yes_price = market_data.get('yes_price', 0) / 100
                 current_no_price = market_data.get('no_price', 0) / 100
                 
-                # Skip if prices are extreme (hard to make markets) - relaxed thresholds
-                if current_yes_price < 0.02 or current_yes_price > 0.98:
+                # Skip if prices are extreme (hard to make markets) - RELAXED for more opportunities
+                if current_yes_price < 0.01 or current_yes_price > 0.99:
                     continue
                 
                 # Get AI prediction for edge calculation

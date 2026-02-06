@@ -828,11 +828,40 @@ async def create_market_opportunities_from_markets(
     opportunities = []
     
     # Limit markets to prevent excessive AI costs and focus on best opportunities
-    max_markets_to_analyze = 10  # REDUCED: More selective (was 20, now 10) to focus on highest quality
+    max_markets_to_analyze = 20  # INCREASED: Analyze more markets for price diversity (was 10, now 20)
     if len(markets) > max_markets_to_analyze:
-        # Sort by volume and take top markets
-        markets = sorted(markets, key=lambda m: m.volume, reverse=True)[:max_markets_to_analyze]
-        logger.info(f"Limited to top {max_markets_to_analyze} markets by volume for AI analysis")
+        # Sort by volume and take top markets - but also ensure price diversity
+        sorted_markets = sorted(markets, key=lambda m: m.volume, reverse=True)
+
+        # Take top markets but try to get diverse price ranges
+        selected_markets = []
+        price_buckets = {
+            'low': [],    # 1-25 cents
+            'mid': [],    # 25-75 cents
+            'high': []    # 75-99 cents
+        }
+
+        # Categorize markets by price
+        for m in sorted_markets[:max_markets_to_analyze * 2]:  # Look at 2x markets
+            if 0.01 <= m.yes_price <= 0.25:
+                price_buckets['low'].append(m)
+            elif 0.25 < m.yes_price <= 0.75:
+                price_buckets['mid'].append(m)
+            elif 0.75 < m.yes_price <= 0.99:
+                price_buckets['high'].append(m)
+
+        # Take a mix from each bucket (favor high volume within buckets)
+        selected_markets.extend(price_buckets['low'][:6])   # 6 low-priced
+        selected_markets.extend(price_buckets['mid'][:8])   # 8 mid-priced
+        selected_markets.extend(price_buckets['high'][:6])  # 6 high-priced
+
+        # If we don't have enough, fill with remaining high-volume markets
+        if len(selected_markets) < max_markets_to_analyze:
+            remaining = [m for m in sorted_markets if m not in selected_markets]
+            selected_markets.extend(remaining[:max_markets_to_analyze - len(selected_markets)])
+
+        markets = selected_markets[:max_markets_to_analyze]
+        logger.info(f"Selected {len(markets)} markets with price diversity (low: {len(price_buckets['low'][:6])}, mid: {len(price_buckets['mid'][:8])}, high: {len(price_buckets['high'][:6])})")
     
     for market in markets:
         try:
@@ -846,7 +875,8 @@ async def create_market_opportunities_from_markets(
             market_prob = market_info.get('yes_price', 50) / 100
             
             # Skip markets with extreme prices (too risky for portfolio)
-            if market_prob < 0.05 or market_prob > 0.95:
+            # RELAXED: Allow wider price range for more opportunities
+            if market_prob < 0.01 or market_prob > 0.99:
                 continue
             
             # Get REAL AI prediction using fast analysis
