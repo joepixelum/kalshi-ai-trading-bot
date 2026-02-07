@@ -28,6 +28,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.utils.database import DatabaseManager
 from src.clients.kalshi_client import KalshiClient
+from src.utils.market_price import get_market_price_dollars
 
 # Configure Streamlit page
 st.set_page_config(
@@ -134,12 +135,12 @@ def load_performance_data():
                         market_data = await kalshi_client.get_market(ticker)
                         if market_data and 'market' in market_data:
                             market_info = market_data['market']
-                            if position_count > 0:  # YES position
-                                position_dict['entry_price'] = float(market_info.get('yes_price', 50) / 100)
-                            else:  # NO position
-                                position_dict['entry_price'] = float(market_info.get('no_price', 50) / 100)
+                            side = "yes" if position_count > 0 else "no"
+                            price = get_market_price_dollars(market_info, side)
+                            if price > 0:
+                                position_dict['entry_price'] = float(price)
                     except:
-                        position_dict['entry_price'] = 0.50  # Keep default price as float
+                        pass  # Keep default price
 
                     positions.append(position_dict)
             
@@ -237,13 +238,13 @@ def load_system_health():
                             
                             # Determine if this is a YES or NO position and get current price
                             # For Kalshi, positive position = YES, negative = NO
-                            if position_count > 0:  # YES position
-                                current_price = market_info.get('yes_price', 50) / 100
-                            else:  # NO position  
-                                current_price = market_info.get('no_price', 50) / 100
-                            
-                            position_value = abs(position_count) * current_price
-                            total_position_value += position_value
+                            side = "yes" if position_count > 0 else "no"
+                            current_price = get_market_price_dollars(market_info, side)
+
+                            if current_price > 0:
+                                position_value = abs(position_count) * current_price
+                                total_position_value += position_value
+                            # If no valid price, skip this position's value (don't add phantom $0.50)
                             
                 except Exception as e:
                     # If we can't get market data for a position, skip it

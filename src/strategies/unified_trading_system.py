@@ -32,6 +32,7 @@ from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Market, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.market_price import get_market_price_dollars, get_market_price_cents
 
 from src.strategies.market_making import (
     AdvancedMarketMaker, 
@@ -167,24 +168,24 @@ class UnifiedAdvancedTradingSystem:
             
             # Get current positions to calculate total portfolio value
             positions_response = await self.kalshi_client.get_positions()
-            positions = positions_response.get('positions', []) if isinstance(positions_response, dict) else []
+            positions = positions_response.get('market_positions', []) if isinstance(positions_response, dict) else []
             total_position_value = 0
-            
+
             if positions:
                 for position in positions:
                     if not isinstance(position, dict):
                         continue  # Skip non-dict positions
-                    quantity = position.get('quantity', 0)
+                    quantity = position.get('position', 0)  # Kalshi uses 'position' not 'quantity'
                     # Get current market price for this position
-                    market_id = position.get('market_id')
+                    market_id = position.get('ticker')  # Kalshi uses 'ticker' not 'market_id'
                     if market_id and quantity != 0:
                         try:
                             market_data = await self.kalshi_client.get_market(market_id)
                             market_info = market_data.get('market', {})
-                            if position.get('side') == 'yes':
-                                current_price = market_info.get('yes_price', 50) / 100
-                            else:
-                                current_price = market_info.get('no_price', 50) / 100
+                            pos_side = "yes" if position.get('side') == 'yes' else "no"
+                            current_price = get_market_price_dollars(market_info, pos_side)
+                            if current_price <= 0:
+                                current_price = 0.50  # Only use 50¢ as last resort
                             position_value = abs(quantity) * current_price
                             total_position_value += position_value
                         except:
@@ -296,16 +297,20 @@ class UnifiedAdvancedTradingSystem:
                 if enforcement_result['action'] == 'positions_closed':
                     self.logger.info(f"✅ CLOSED {enforcement_result['positions_closed']} positions to meet limits")
             
-            # Step 1: Get ALL available markets (no time restrictions) - MORE PERMISSIVE VOLUME
+            # Step 1: Get ALL available markets (no time restrictions)
             markets = await self.db_manager.get_eligible_markets(
-            volume_min=200,  # DECREASED: Much lower volume requirement (was 50,000, now 200) for more opportunities
-            max_days_to_expiry=365  # Accept any timeline with dynamic exits
-        )
+                volume_min=200,
+                max_days_to_expiry=365  # Accept any timeline with dynamic exits
+            )
             if not markets:
                 self.logger.warning("No markets available for trading")
                 return TradingSystemResults()
-            
-            self.logger.info(f"Analyzing {len(markets)} markets across all strategies")
+
+            # Shuffle markets to avoid always analyzing the same ones first
+            import random
+            random.shuffle(markets)
+
+            self.logger.info(f"Analyzing {len(markets)} markets across all strategies (shuffled for diversity)")
             
             # Step 2: Parallel strategy analysis
             market_making_results, portfolio_allocation, quick_flip_results, crypto_momentum_results = await asyncio.gather(
@@ -583,11 +588,11 @@ class UnifiedAdvancedTradingSystem:
                     # FIXED: Extract from nested 'market' object
                     market_info = market_data.get('market', {})
                     
-                    # Get price for the intended side (already determined above)
-                    if intended_side == "YES":
-                        price = market_info.get('yes_price', 50) / 100
-                    else:
-                        price = market_info.get('no_price', 50) / 100
+                    # Get price for the intended side using proper API field names
+                    price = get_market_price_dollars(market_info, intended_side.lower())
+                    if price <= 0:
+                        self.logger.warning(f"No valid price for {market_id} {intended_side}, skipping")
+                        continue
                     
                     # Calculate quantity
                     quantity = max(1, int(position_value / price))
@@ -653,7 +658,7 @@ class UnifiedAdvancedTradingSystem:
                         results['successful_executions'] += 1
                         results['positions_created'] += 1
                         results['total_capital_used'] += position_value
-                        self.logger.info(f"✅ Executed position: {market_id} {side} {quantity} at {price:.3f}")
+                        self.logger.info(f"✅ Executed position: {market_id} {intended_side} {quantity} at {price:.3f}")
                     else:
                         results['failed_executions'] += 1
                         self.logger.error(f"❌ Failed to execute position for {market_id}")

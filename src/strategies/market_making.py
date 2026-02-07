@@ -135,10 +135,11 @@ class AdvancedMarketMaker:
                     # Fallback to direct format if nested object not present
                     market_info = market_data
 
-                current_yes_price = market_info.get('yes_price', 0) / 100
-                current_no_price = market_info.get('no_price', 0) / 100
-                
-                # Skip if prices are extreme (hard to make markets) - RELAXED for more opportunities
+                from src.utils.market_price import get_market_price_dollars, get_both_prices_cents
+                current_yes_price = get_market_price_dollars(market_info, "yes")
+                current_no_price = get_market_price_dollars(market_info, "no")
+
+                # Skip if prices are extreme or missing
                 if current_yes_price < 0.01 or current_yes_price > 0.99:
                     continue
                 
@@ -471,8 +472,11 @@ class AdvancedMarketMaker:
         try:
             # Extract enhanced context from market_info if available
             if market_info:
-                yes_price_cents = market_info.get('yes_price', 50)
-                no_price_cents = market_info.get('no_price', 50)
+                from src.utils.market_price import get_both_prices_cents
+                yes_price_cents, no_price_cents = get_both_prices_cents(market_info)
+                if yes_price_cents <= 0:
+                    yes_price_cents = 50
+                    no_price_cents = 50
                 category = market_info.get('category', market.category or 'Unknown')
                 subtitle = market_info.get('subtitle', '')
                 volume = market_info.get('volume', market.volume)
@@ -638,7 +642,9 @@ class AdvancedMarketMaker:
             if not market_data:
                 return False
             
-            current_yes_price = market_data.get('yes_price', 0) / 100
+            from src.utils.market_price import get_market_price_dollars
+            market_info = market_data.get('market', market_data)
+            current_yes_price = get_market_price_dollars(market_info, "yes")
             order_price = order.price / 100
             
             # Update if market has moved significantly

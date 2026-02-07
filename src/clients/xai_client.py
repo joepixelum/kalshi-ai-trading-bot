@@ -679,11 +679,13 @@ Required format:
                 self.logger.warning(f"Failed to parse close_time: {e}")
                 days_to_expiry = 0
         
+        from src.utils.market_price import get_both_prices_cents
+        yes_cents, no_cents = get_both_prices_cents(market_data)
         prompt_params = {
             "ticker": market_data.get("ticker", "UNKNOWN"),
             "title": market_data.get("title", "Unknown Market"),
-            "yes_price": market_data.get("yes_bid", 0),
-            "no_price": market_data.get("no_bid", 0),
+            "yes_price": yes_cents if yes_cents > 0 else market_data.get("yes_price", 50),
+            "no_price": no_cents if no_cents > 0 else market_data.get("no_price", 50),
             "volume": market_data.get("volume", 0),
             "close_time": close_time,
             "days_to_expiry": days_to_expiry,

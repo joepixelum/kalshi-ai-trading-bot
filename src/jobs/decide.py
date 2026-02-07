@@ -130,7 +130,7 @@ async def make_decision_for_market(
                 news_summary = f"Near-expiry high-confidence analysis. Market at {market.yes_price:.2f}"
                 
                 decision = await xai_client.get_trading_decision(
-                    market_data={"title": market.title, "yes_price": market.yes_price},
+                    market_data={"title": market.title, "yes_price": int(market.yes_price * 100)},
                     portfolio_data=portfolio_data,
                     news_summary=news_summary,
                     strategy="directional_trading",
@@ -194,9 +194,10 @@ async def make_decision_for_market(
         full_market_data = full_market_data_response.get("market", {})
         rules = full_market_data.get("rules", "No rules available.")
         
+        # Convert prices from dollars (0.0-1.0) to cents (0-100) for LLM prompts
         market_data = {
             "ticker": market.market_id, "title": market.title, "rules": rules,
-            "yes_price": market.yes_price, "no_price": market.no_price,
+            "yes_price": int(market.yes_price * 100), "no_price": int(market.no_price * 100),
             "volume": market.volume, "expiration_ts": market.expiration_ts,
         }
 
@@ -488,7 +489,8 @@ def estimate_market_volatility(market: Market) -> float:
     """
     try:
         # Get current price to estimate volatility
-        current_price = getattr(market, 'yes_price', 50) / 100  # Convert to 0-1
+        # market.yes_price is stored as 0.0-1.0 in the database
+        current_price = market.yes_price if market.yes_price > 0 else 0.50
         
         # Binary option volatility formula
         intrinsic_vol = np.sqrt(current_price * (1 - current_price))

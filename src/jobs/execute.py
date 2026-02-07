@@ -12,6 +12,7 @@ from src.utils.database import DatabaseManager, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
 from src.clients.kalshi_client import KalshiClient, KalshiAPIError
+from src.utils.market_price import get_market_price_dollars
 
 async def execute_position(
     position: Position, 
@@ -181,18 +182,15 @@ async def place_profit_taking_orders(
                     continue
                 
                 # Get current price based on position side
-                if position.side == "YES":
-                    current_price = market_data.get('yes_price', 0) / 100  # Convert cents to dollars
-                else:
-                    current_price = market_data.get('no_price', 0) / 100
-                
+                current_price = get_market_price_dollars(market_data, position.side.lower())
+
                 # Calculate current profit
                 if current_price > 0:
                     profit_pct = (current_price - position.entry_price) / position.entry_price
                     unrealized_pnl = (current_price - position.entry_price) * position.quantity
-                    
+
                     logger.debug(f"Position {position.market_id}: Entry=${position.entry_price:.3f}, Current=${current_price:.3f}, Profit={profit_pct:.1%}, PnL=${unrealized_pnl:.2f}")
-                    
+
                     # Check if we should place a profit-taking sell order
                     if profit_pct >= profit_threshold:
                         # Calculate sell limit price (slightly below current to ensure execution)
@@ -269,11 +267,8 @@ async def place_stop_loss_orders(
                     continue
                 
                 # Get current price based on position side
-                if position.side == "YES":
-                    current_price = market_data.get('yes_price', 0) / 100
-                else:
-                    current_price = market_data.get('no_price', 0) / 100
-                
+                current_price = get_market_price_dollars(market_data, position.side.lower())
+
                 # Calculate current loss
                 if current_price > 0:
                     loss_pct = (current_price - position.entry_price) / position.entry_price

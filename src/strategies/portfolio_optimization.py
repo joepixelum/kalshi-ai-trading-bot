@@ -36,6 +36,7 @@ from src.clients.kalshi_client import KalshiClient
 from src.clients.xai_client import XAIClient
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.market_price import get_market_price_cents, get_market_price_dollars, get_both_prices_cents, has_valid_prices
 
 
 @dataclass
@@ -172,7 +173,7 @@ class AdvancedPortfolioOptimizer:
                 # Update the opportunity object in place
                 opp.kelly_fraction = kelly_val
                 opp.fractional_kelly = kelly_val * 0.5  # Conservative Kelly
-                opp.risk_adjusted_fraction = final_kelly
+                opp.risk_adjusted_fraction = kelly_val
             
             # Step 4: Apply correlation adjustments
             correlation_matrix = await self._estimate_correlation_matrix(enhanced_opportunities)
@@ -828,40 +829,65 @@ async def create_market_opportunities_from_markets(
     opportunities = []
     
     # Limit markets to prevent excessive AI costs and focus on best opportunities
-    max_markets_to_analyze = 30  # AGGRESSIVE: Analyze even more markets for more opportunities (was 20, now 30)
+    max_markets_to_analyze = 30
     if len(markets) > max_markets_to_analyze:
-        # Sort by volume and take top markets - but also ensure price diversity
-        sorted_markets = sorted(markets, key=lambda m: m.volume, reverse=True)
+        import random
 
-        # Take top markets but try to get diverse price ranges
+        # CATEGORY-DIVERSE SELECTION: Don't just pick highest volume (which = sports)
+        # Group markets by category first
+        category_buckets = {}
+        for m in markets:
+            cat = (m.category or 'Unknown').lower()
+            if cat not in category_buckets:
+                category_buckets[cat] = []
+            category_buckets[cat].append(m)
+
+        # Sort each category by volume (best within each category)
+        for cat in category_buckets:
+            category_buckets[cat].sort(key=lambda m: m.volume, reverse=True)
+
+        # Round-robin across categories to ensure diversity
         selected_markets = []
-        price_buckets = {
-            'low': [],    # 1-25 cents
-            'mid': [],    # 25-75 cents
-            'high': []    # 75-99 cents
-        }
+        selected_ids = set()
+        categories = list(category_buckets.keys())
+        random.shuffle(categories)  # Randomize category order each cycle
 
-        # Categorize markets by price
-        for m in sorted_markets[:max_markets_to_analyze * 2]:  # Look at 2x markets
-            if 0.01 <= m.yes_price <= 0.25:
-                price_buckets['low'].append(m)
-            elif 0.25 < m.yes_price <= 0.75:
-                price_buckets['mid'].append(m)
-            elif 0.75 < m.yes_price <= 0.99:
-                price_buckets['high'].append(m)
+        # First pass: take top markets from each category
+        markets_per_category = max(2, max_markets_to_analyze // max(len(categories), 1))
+        for cat in categories:
+            for m in category_buckets[cat][:markets_per_category]:
+                if m.market_id not in selected_ids:
+                    selected_markets.append(m)
+                    selected_ids.add(m.market_id)
+                if len(selected_markets) >= max_markets_to_analyze:
+                    break
+            if len(selected_markets) >= max_markets_to_analyze:
+                break
 
-        # Take a mix from each bucket (favor high volume within buckets)
-        selected_markets.extend(price_buckets['low'][:10])   # 10 low-priced (was 6)
-        selected_markets.extend(price_buckets['mid'][:10])   # 10 mid-priced (was 8)
-        selected_markets.extend(price_buckets['high'][:10])  # 10 high-priced (was 6)
-
-        # If we don't have enough, fill with remaining high-volume markets
+        # Second pass: also ensure price diversity within selected markets
         if len(selected_markets) < max_markets_to_analyze:
-            remaining = [m for m in sorted_markets if m not in selected_markets]
-            selected_markets.extend(remaining[:max_markets_to_analyze - len(selected_markets)])
+            remaining = [m for m in markets if m.market_id not in selected_ids]
+            # Add some low-priced and high-priced markets for variety
+            low_price = [m for m in remaining if 0.01 <= m.yes_price <= 0.25]
+            high_price = [m for m in remaining if 0.75 < m.yes_price <= 0.99]
+            for m in low_price[:5] + high_price[:5]:
+                if m.market_id not in selected_ids and len(selected_markets) < max_markets_to_analyze:
+                    selected_markets.append(m)
+                    selected_ids.add(m.market_id)
+
+        # Fill any remaining slots
+        if len(selected_markets) < max_markets_to_analyze:
+            remaining = [m for m in markets if m.market_id not in selected_ids]
+            random.shuffle(remaining)
+            for m in remaining[:max_markets_to_analyze - len(selected_markets)]:
+                selected_markets.append(m)
 
         markets = selected_markets[:max_markets_to_analyze]
-        logger.info(f"Selected {len(markets)} markets with price diversity (low: {len(price_buckets['low'][:6])}, mid: {len(price_buckets['mid'][:8])}, high: {len(price_buckets['high'][:6])})")
+        cat_counts = {}
+        for m in markets:
+            cat = (m.category or 'Unknown').lower()
+            cat_counts[cat] = cat_counts.get(cat, 0) + 1
+        logger.info(f"Selected {len(markets)} markets across {len(cat_counts)} categories: {dict(sorted(cat_counts.items(), key=lambda x: -x[1]))}")
     
     for market in markets:
         try:
@@ -870,15 +896,21 @@ async def create_market_opportunities_from_markets(
             if not market_data:
                 continue
             
-            # FIXED: Extract from nested 'market' object (same fix as immediate trading)
+            # FIXED: Extract from nested 'market' object using proper API field names
             market_info = market_data.get('market', {})
-            market_prob = market_info.get('yes_price', 50) / 100
-            
+            yes_cents = get_market_price_cents(market_info, "yes")
+
+            # Skip markets with no valid price data
+            if yes_cents <= 0:
+                logger.warning(f"No valid price data for {market.market_id}, skipping")
+                continue
+
+            market_prob = yes_cents / 100.0
+
             # Skip markets with extreme prices (too risky for portfolio)
-            # RELAXED: Allow wider price range for more opportunities
             if market_prob < 0.01 or market_prob > 0.99:
                 continue
-            
+
             # Get REAL AI prediction using fast analysis with full market context
             predicted_prob, confidence = await _get_fast_ai_prediction(
                 market, xai_client, market_prob, market_info
@@ -998,29 +1030,27 @@ async def _evaluate_immediate_trade(
             
             # Get current positions to calculate total portfolio value
             positions_response = await kalshi_client.get_positions()
-            positions = positions_response.get('positions', []) if isinstance(positions_response, dict) else []
+            positions = positions_response.get('market_positions', []) if isinstance(positions_response, dict) else []
             total_position_value = 0
-            
+
             if positions:
                 for position in positions:
                     if not isinstance(position, dict):
-                        continue  # Skip non-dict positions
-                    quantity = position.get('quantity', 0)
-                    # Get current market price for this position
-                    market_id = position.get('market_id')
+                        continue
+                    quantity = position.get('position', 0)  # Kalshi uses 'position' not 'quantity'
+                    market_id = position.get('ticker')  # Kalshi uses 'ticker' not 'market_id'
                     if market_id and quantity != 0:
                         try:
                             market_data = await kalshi_client.get_market(market_id)
                             market_info = market_data.get('market', {})
-                            if position.get('side') == 'yes':
-                                current_price = market_info.get('yes_price', 50) / 100
-                            else:
-                                current_price = market_info.get('no_price', 50) / 100
+                            pos_side = "yes" if quantity > 0 else "no"
+                            current_price = get_market_price_dollars(market_info, pos_side)
+                            if current_price <= 0:
+                                current_price = 0.50
                             position_value = abs(quantity) * current_price
                             total_position_value += position_value
                         except:
-                            # If we can't get market data, estimate at entry price
-                            total_position_value += abs(quantity) * 0.50  # Conservative 50¢ estimate
+                            total_position_value += abs(quantity) * 0.50
             
             total_portfolio_value = available_cash + total_position_value
             logger.info(f"💰 Portfolio value: Cash=${available_cash:.2f} + Positions=${total_position_value:.2f} = Total=${total_portfolio_value:.2f}")
@@ -1183,16 +1213,9 @@ async def _evaluate_immediate_trade(
                 market_info = market_data  # Fallback: use direct format
 
             market_status = market_info.get('status', 'unknown')
-            yes_ask = market_info.get('yes_ask', 0)
-            no_ask = market_info.get('no_ask', 0)
+            yes_cents, no_cents = get_both_prices_cents(market_info)
 
-            # FALLBACK: If ask prices missing, try bid prices
-            if not yes_ask or yes_ask <= 0:
-                yes_ask = market_info.get('yes_bid', 0)
-            if not no_ask or no_ask <= 0:
-                no_ask = market_info.get('no_bid', 0)
-
-            logger.info(f"🔍 Market validation for {opportunity.market_id}: status={market_status}, YES_ASK={yes_ask}¢, NO_ASK={no_ask}¢")
+            logger.info(f"🔍 Market validation for {opportunity.market_id}: status={market_status}, YES={yes_cents}¢, NO={no_cents}¢")
 
             # RELAXED: Accept 'active', 'open', or even unknown status (proceed cautiously)
             if market_status not in ['active', 'open', 'unknown']:
@@ -1200,9 +1223,8 @@ async def _evaluate_immediate_trade(
                 # Don't return - try to execute anyway in paper trading mode
 
             # RELAXED: If prices are missing, use opportunity prices as fallback
-            if not (yes_ask and no_ask and yes_ask > 0 and no_ask > 0):
-                logger.warning(f"⚠️ {opportunity.market_id} - API prices invalid (YES={yes_ask}¢, NO={no_ask}¢), using opportunity price {opportunity.market_probability*100:.1f}¢")
-                # Don't return - use opportunity price as fallback (already set in position object)
+            if yes_cents <= 0 and no_cents <= 0:
+                logger.warning(f"⚠️ {opportunity.market_id} - API prices invalid (YES={yes_cents}¢, NO={no_cents}¢), using opportunity price {opportunity.market_probability*100:.1f}¢")
             else:
                 logger.info(f"✅ Market validation passed for {opportunity.market_id} - Status: {market_status}, proceeding with trade!")
 
@@ -1269,8 +1291,12 @@ async def _get_fast_ai_prediction(
     try:
         # Extract additional context from market_info if available
         if market_info:
-            yes_price_cents = market_info.get('yes_price', int(market_price * 100))
-            no_price_cents = market_info.get('no_price', int((1 - market_price) * 100))
+            from src.utils.market_price import get_both_prices_cents
+            yes_price_cents, no_price_cents = get_both_prices_cents(market_info)
+            # If API returned no prices, fall back to the market_price we already have
+            if yes_price_cents <= 0:
+                yes_price_cents = int(market_price * 100)
+                no_price_cents = int((1 - market_price) * 100)
             category = market_info.get('category', market.category or 'Unknown')
             subtitle = market_info.get('subtitle', '')
             volume = market_info.get('volume', market.volume)
