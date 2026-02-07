@@ -211,9 +211,12 @@ class QuickFlipScalpingStrategy:
         """
         try:
             # Create focused prompt for quick movement analysis
+            category = market.category or "Unknown"
             prompt = f"""
-QUICK SCALP ANALYSIS for {market.title}
+QUICK SCALP ANALYSIS - {category.upper()}
 
+Market: {market.title}
+Category: {category}
 Current {side} price: {current_price}¢
 Market closes: {datetime.fromtimestamp(market.expiration_ts).strftime('%Y-%m-%d %H:%M')}
 

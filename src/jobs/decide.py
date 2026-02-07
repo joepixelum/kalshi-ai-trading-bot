@@ -130,7 +130,13 @@ async def make_decision_for_market(
                 news_summary = f"Near-expiry high-confidence analysis. Market at {market.yes_price:.2f}"
                 
                 decision = await xai_client.get_trading_decision(
-                    market_data={"title": market.title, "yes_price": int(market.yes_price * 100)},
+                    market_data={
+                        "title": market.title,
+                        "category": market.category or "Unknown",
+                        "subtitle": "",  # Not available from DB, will be enriched if needed
+                        "yes_price": int(market.yes_price * 100),
+                        "no_price": int(market.no_price * 100),
+                    },
                     portfolio_data=portfolio_data,
                     news_summary=news_summary,
                     strategy="directional_trading",
@@ -193,12 +199,20 @@ async def make_decision_for_market(
         full_market_data_response = await kalshi_client.get_market(market.market_id)
         full_market_data = full_market_data_response.get("market", {})
         rules = full_market_data.get("rules", "No rules available.")
-        
+        subtitle = full_market_data.get("subtitle", "")
+        category = full_market_data.get("category", market.category or "Unknown")
+
         # Convert prices from dollars (0.0-1.0) to cents (0-100) for LLM prompts
         market_data = {
-            "ticker": market.market_id, "title": market.title, "rules": rules,
-            "yes_price": int(market.yes_price * 100), "no_price": int(market.no_price * 100),
-            "volume": market.volume, "expiration_ts": market.expiration_ts,
+            "ticker": market.market_id,
+            "title": market.title,
+            "category": category,
+            "subtitle": subtitle,
+            "rules": rules,
+            "yes_price": int(market.yes_price * 100),
+            "no_price": int(market.no_price * 100),
+            "volume": market.volume,
+            "expiration_ts": market.expiration_ts,
         }
 
         # COST OPTIMIZATION: Skip expensive news search for low-volume markets

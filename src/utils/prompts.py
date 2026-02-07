@@ -17,10 +17,12 @@ You are a team of expert Kalshi prediction traders:
 
 ---
 **Market Context:**
+- **Category:** {category}
 - **Title:** {title}
+- **Subtitle:** {subtitle}
 - **Rules:** {rules}
-- **YES Price:** {yes_price}
-- **NO Price:** {no_price}
+- **YES Price:** {yes_price}¢
+- **NO Price:** {no_price}¢
 - **Volume:** {volume}
 - **Expires In (Days):** {days_to_expiry}
 - **News Summary:** {news_summary}
@@ -62,7 +64,9 @@ Your final output must be only the JSON object requested by the Trader.
 SIMPLIFIED_PROMPT_TPL = """
 Analyze this prediction market and decide whether to trade.
 
+**Category:** {category}
 **Market:** {title}
+{subtitle}
 **YES:** {yes_price}¢  **NO:** {no_price}¢  **Volume:** ${volume:,.0f}  **Days:** {days_to_expiry}
 **Cash:** ${cash:,.2f}  **Max Trade:** ${max_trade_value:,.2f}
 

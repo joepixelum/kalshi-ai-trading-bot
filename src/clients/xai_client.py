@@ -566,7 +566,9 @@ Required format:
         
         # Use the existing comprehensive prompt
         return MULTI_AGENT_PROMPT_TPL.format(
+            category=market_data.get('category', 'Unknown'),
             title=market_data.get('title', 'Unknown Market'),
+            subtitle=market_data.get('subtitle', ''),
             rules=market_data.get('rules', 'No specific rules provided'),
             yes_price=market_data.get('yes_price', 50),
             no_price=market_data.get('no_price', 50),
@@ -683,7 +685,9 @@ Required format:
         yes_cents, no_cents = get_both_prices_cents(market_data)
         prompt_params = {
             "ticker": market_data.get("ticker", "UNKNOWN"),
+            "category": market_data.get("category", "Unknown"),
             "title": market_data.get("title", "Unknown Market"),
+            "subtitle": market_data.get("subtitle", ""),
             "yes_price": yes_cents if yes_cents > 0 else market_data.get("yes_price", 50),
             "no_price": no_cents if no_cents > 0 else market_data.get("no_price", 50),
             "volume": market_data.get("volume", 0),
