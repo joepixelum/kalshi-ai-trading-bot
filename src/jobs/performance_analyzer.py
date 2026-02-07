@@ -246,7 +246,10 @@ Focus on actionable insights that can immediately improve performance.
             response = await self.xai_client.get_completion(
                 prompt=analysis_prompt,
                 max_tokens=3000,
-                temperature=0.3
+                temperature=0.3,
+                strategy="performance_analysis",
+                query_type="performance_analysis",
+                market_id=None
             )
             
             # Extract text from response

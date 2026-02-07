@@ -120,6 +120,11 @@ class BeastModeBot:
                 asyncio.create_task(self._run_position_tracking(db_manager, kalshi_client)),
                 asyncio.create_task(self._run_performance_evaluation(db_manager))
             ]
+
+            # Add crypto feed monitoring if enabled
+            if hasattr(settings, 'crypto_momentum_enabled') and settings.crypto_momentum_enabled:
+                self.logger.info("🪙 Crypto momentum strategy enabled - starting WebSocket monitoring")
+                tasks.append(asyncio.create_task(self._monitor_crypto_feeds()))
             
             # Setup shutdown handler
             def signal_handler():
@@ -284,6 +289,22 @@ class BeastModeBot:
             except Exception as e:
                 self.logger.error(f"Error in performance evaluation: {e}")
                 await asyncio.sleep(300)
+
+    async def _monitor_crypto_feeds(self):
+        """
+        Monitor cryptocurrency price feeds for health and reconnection.
+
+        The CryptoPriceFeedClient handles reconnection internally, so this task
+        primarily logs status and could add additional health checks if needed.
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                # Periodic health check logging (every 5 minutes)
+                await asyncio.sleep(300)
+                self.logger.debug("🪙 Crypto price feeds running (health check)")
+            except Exception as e:
+                self.logger.error(f"Error monitoring crypto feeds: {e}")
+                await asyncio.sleep(60)
 
     async def run(self):
         """Main entry point for Beast Mode Bot."""

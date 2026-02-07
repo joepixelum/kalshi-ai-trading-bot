@@ -199,15 +199,28 @@ class DatabaseManager(TradingLoggerMixin):
             """)
             
             await db.execute("""
-                UPDATE trade_logs 
-                SET strategy = 'directional_trading' 
+                UPDATE trade_logs
+                SET strategy = 'directional_trading'
                 WHERE strategy IS NULL AND (
                     rationale LIKE 'High-confidence%' OR
                     rationale LIKE '%near-expiry%' OR
                     rationale LIKE '%decision%'
                 )
             """)
-            
+
+            # Set any remaining NULL strategies to 'llm_trading' (catch-all for LLM-based decisions)
+            await db.execute("""
+                UPDATE positions
+                SET strategy = 'llm_trading'
+                WHERE strategy IS NULL
+            """)
+
+            await db.execute("""
+                UPDATE trade_logs
+                SET strategy = 'llm_trading'
+                WHERE strategy IS NULL
+            """)
+
             self.logger.info("Migrated existing position/trade data with strategy information")
             
         except Exception as e:
@@ -319,11 +332,44 @@ class DatabaseManager(TradingLoggerMixin):
             )
         """)
 
+        # Add crypto_momentum_trades table for crypto momentum strategy
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS crypto_momentum_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                entry_timestamp TEXT NOT NULL,
+                settlement_timestamp TEXT NOT NULL,
+
+                momentum_5min REAL NOT NULL,
+                momentum_10min REAL NOT NULL,
+                momentum_direction TEXT NOT NULL,
+                confidence REAL NOT NULL,
+
+                crypto_price_at_entry REAL NOT NULL,
+                kalshi_price_at_entry REAL NOT NULL,
+                settlement_price REAL,
+
+                side TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                entry_price REAL NOT NULL,
+                exit_price REAL,
+
+                won INTEGER,
+                pnl REAL,
+
+                strategy TEXT DEFAULT 'crypto_momentum',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Create indices for performance
         await db.execute("CREATE INDEX IF NOT EXISTS idx_market_analyses_market_id ON market_analyses(market_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_market_analyses_timestamp ON market_analyses(analysis_timestamp)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_daily_cost_date ON daily_cost_tracking(date)")
-        
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_crypto_momentum_timestamp ON crypto_momentum_trades(entry_timestamp)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_crypto_momentum_symbol ON crypto_momentum_trades(symbol)")
+
         # Run migrations to ensure schema is up to date
         await self._run_migrations(db)
         

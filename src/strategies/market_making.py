@@ -128,16 +128,23 @@ class AdvancedMarketMaker:
                 market_data = await self.kalshi_client.get_market(market.market_id)
                 if not market_data:
                     continue
-                    
-                current_yes_price = market_data.get('yes_price', 0) / 100
-                current_no_price = market_data.get('no_price', 0) / 100
-                
-                # Skip if prices are extreme (hard to make markets) - relaxed thresholds
-                if current_yes_price < 0.02 or current_yes_price > 0.98:
+
+                # FIXED: Extract from nested 'market' object in API response
+                market_info = market_data.get('market', {})
+                if not market_info:
+                    # Fallback to direct format if nested object not present
+                    market_info = market_data
+
+                from src.utils.market_price import get_market_price_dollars, get_both_prices_cents
+                current_yes_price = get_market_price_dollars(market_info, "yes")
+                current_no_price = get_market_price_dollars(market_info, "no")
+
+                # Skip if prices are extreme or missing
+                if current_yes_price < 0.01 or current_yes_price > 0.99:
                     continue
                 
-                # Get AI prediction for edge calculation
-                analysis = await self._get_ai_analysis(market)
+                # Get AI prediction for edge calculation with full market context
+                analysis = await self._get_ai_analysis(market, market_info)
                 if not analysis:
                     continue
                     
@@ -454,33 +461,105 @@ class AdvancedMarketMaker:
             self.logger.error(f"Error placing limit order: {e}")
             order.status = "failed"
 
-    async def _get_ai_analysis(self, market: Market) -> Optional[Dict]:
+    async def _get_ai_analysis(self, market: Market, market_info: Dict = None) -> Optional[Dict]:
         """
         Get AI analysis for market making edge calculation.
+
+        Args:
+            market: Market object from database
+            market_info: Fresh market data from Kalshi API
         """
         try:
-            # Use existing AI analysis but optimized for market making
+            # Extract enhanced context from market_info if available
+            if market_info:
+                from src.utils.market_price import get_both_prices_cents
+                yes_price_cents, no_price_cents = get_both_prices_cents(market_info)
+                if yes_price_cents <= 0:
+                    yes_price_cents = 50
+                    no_price_cents = 50
+                category = market_info.get('category', market.category or 'Unknown')
+                subtitle = market_info.get('subtitle', '')
+                volume = market_info.get('volume', market.volume)
+                yes_bid = market_info.get('yes_bid', yes_price_cents)
+                yes_ask = market_info.get('yes_ask', yes_price_cents)
+                no_bid = market_info.get('no_bid', no_price_cents)
+                no_ask = market_info.get('no_ask', no_price_cents)
+            else:
+                yes_price_cents = int(market.yes_price * 100)
+                no_price_cents = int(market.no_price * 100)
+                category = market.category or 'Unknown'
+                subtitle = ''
+                volume = market.volume
+                yes_bid = yes_price_cents
+                yes_ask = yes_price_cents
+                no_bid = no_price_cents
+                no_ask = no_price_cents
+
+            # Calculate spread for market making context
+            yes_spread = yes_ask - yes_bid
+            no_spread = no_ask - no_bid
+
+            # Calculate time to expiration
+            import time
+            from datetime import datetime
+
+            if hasattr(market, 'expiration_ts') and market.expiration_ts:
+                time_remaining_seconds = market.expiration_ts - time.time()
+                time_remaining_hours = time_remaining_seconds / 3600
+
+                if time_remaining_hours < 24:
+                    expiry_str = f"{time_remaining_hours:.1f} hours"
+                else:
+                    expiry_str = f"{time_remaining_hours / 24:.1f} days"
+
+                expiry_date = datetime.fromtimestamp(market.expiration_ts).strftime('%Y-%m-%d %H:%M')
+            else:
+                expiry_str = "Unknown"
+                expiry_date = "Unknown"
+
+            # Enhanced prompt with full market context
             prompt = f"""
-            MARKET MAKING ANALYSIS REQUEST
-            
+            MARKET MAKING ANALYSIS - {category.upper()}
+
             Market: {market.title}
-            
-            Provide a quick assessment for market making in JSON format:
+            {f"Details: {subtitle}" if subtitle else ""}
+            Category: {category}
+            Market ID: {market.market_id}
+
+            CURRENT ORDER BOOK:
+            YES Side:
+            • Bid: {yes_bid}¢ | Ask: {yes_ask}¢ | Spread: {yes_spread}¢
+            NO Side:
+            • Bid: {no_bid}¢ | Ask: {no_ask}¢ | Spread: {no_spread}¢
+
+            MARKET INFO:
+            • Volume: ${volume:,}
+            • Expires: {expiry_date} ({expiry_str} from now)
+
+            TASK: Assess this market for market making opportunities. Provide in JSON format:
             {{
-                "probability": [0.0-1.0 probability estimate],
-                "confidence": [0.0-1.0 confidence level],
-                "volatility_factors": "brief description",
-                "stability": [0.0-1.0 price stability estimate]
+                "probability": [0.0-1.0 - your estimated fair probability for YES],
+                "confidence": [0.0-1.0 - your confidence in this estimate],
+                "volatility_factors": "brief description of what might cause price movement",
+                "stability": [0.0-1.0 - how stable you expect prices to be]
             }}
-            
-            Focus on: probability estimate and confidence in that estimate.
+
+            Consider:
+            - Current spreads (YES: {yes_spread}¢, NO: {no_spread}¢)
+            - Time until expiration ({expiry_str})
+            - Event category ({category})
+            - Trading volume (${volume:,})
+            - Any catalysts that could cause volatility
             """
             
             # Use AI analysis for market making - higher tokens for reasoning models
             response = await self.xai_client.get_completion(
-                prompt, 
+                prompt,
                 max_tokens=3000,  # Higher for reasoning models like grok-4
-                temperature=0.1   # Lower for consistency
+                temperature=0.1,   # Lower for consistency
+                strategy="market_making",
+                query_type="market_analysis",
+                market_id=market.market_id
             )
             
             # Check if AI response is None (API exhausted or failed)
@@ -563,7 +642,9 @@ class AdvancedMarketMaker:
             if not market_data:
                 return False
             
-            current_yes_price = market_data.get('yes_price', 0) / 100
+            from src.utils.market_price import get_market_price_dollars
+            market_info = market_data.get('market', market_data)
+            current_yes_price = get_market_price_dollars(market_info, "yes")
             order_price = order.price / 100
             
             # Update if market has moved significantly

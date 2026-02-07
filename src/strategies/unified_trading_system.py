@@ -32,6 +32,7 @@ from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Market, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.market_price import get_market_price_dollars, get_market_price_cents
 
 from src.strategies.market_making import (
     AdvancedMarketMaker, 
@@ -55,10 +56,11 @@ from src.strategies.quick_flip_scalping import (
 class TradingSystemConfig:
     """Configuration for the unified trading system."""
     # Capital allocation across strategies
-    market_making_allocation: float = 0.30  # 30% for market making
+    market_making_allocation: float = 0.32  # 32% for market making
     directional_trading_allocation: float = 0.40  # 40% for directional positions
-    quick_flip_allocation: float = 0.30     # 30% for quick flip scalping
-    arbitrage_allocation: float = 0.00      # 0% for arbitrage opportunities
+    quick_flip_allocation: float = 0.24     # 24% for quick flip scalping
+    arbitrage_allocation: float = 0.08      # 8% for arbitrage opportunities
+    crypto_momentum_allocation: float = 0.20  # 20% for crypto momentum strategy
     
     # Risk management
     max_portfolio_volatility: float = 0.20  # 20% max portfolio vol
@@ -83,23 +85,28 @@ class TradingSystemResults:
     market_making_orders: int = 0
     market_making_exposure: float = 0.0
     market_making_expected_profit: float = 0.0
-    
+
     # Directional trading results
     directional_positions: int = 0
     directional_exposure: float = 0.0
     directional_expected_return: float = 0.0
-    
+
+    # Crypto momentum results
+    crypto_momentum_positions: int = 0
+    crypto_momentum_exposure: float = 0.0
+    crypto_momentum_expected_profit: float = 0.0
+
     # Portfolio metrics
     total_capital_used: float = 0.0
     portfolio_expected_return: float = 0.0
     portfolio_sharpe_ratio: float = 0.0
     portfolio_volatility: float = 0.0
-    
+
     # Risk metrics
     max_portfolio_drawdown: float = 0.0
     correlation_score: float = 0.0
     diversification_ratio: float = 0.0
-    
+
     # Performance
     total_positions: int = 0
     capital_efficiency: float = 0.0  # % of capital used
@@ -161,24 +168,24 @@ class UnifiedAdvancedTradingSystem:
             
             # Get current positions to calculate total portfolio value
             positions_response = await self.kalshi_client.get_positions()
-            positions = positions_response.get('positions', []) if isinstance(positions_response, dict) else []
+            positions = positions_response.get('market_positions', []) if isinstance(positions_response, dict) else []
             total_position_value = 0
-            
+
             if positions:
                 for position in positions:
                     if not isinstance(position, dict):
                         continue  # Skip non-dict positions
-                    quantity = position.get('quantity', 0)
+                    quantity = position.get('position', 0)  # Kalshi uses 'position' not 'quantity'
                     # Get current market price for this position
-                    market_id = position.get('market_id')
+                    market_id = position.get('ticker')  # Kalshi uses 'ticker' not 'market_id'
                     if market_id and quantity != 0:
                         try:
                             market_data = await self.kalshi_client.get_market(market_id)
                             market_info = market_data.get('market', {})
-                            if position.get('side') == 'yes':
-                                current_price = market_info.get('yes_price', 50) / 100
-                            else:
-                                current_price = market_info.get('no_price', 50) / 100
+                            pos_side = "yes" if position.get('side') == 'yes' else "no"
+                            current_price = get_market_price_dollars(market_info, pos_side)
+                            if current_price <= 0:
+                                current_price = 0.50  # Only use 50¢ as last resort
                             position_value = abs(quantity) * current_price
                             total_position_value += position_value
                         except:
@@ -203,12 +210,45 @@ class UnifiedAdvancedTradingSystem:
         self.directional_capital = self.total_capital * self.config.directional_trading_allocation
         self.quick_flip_capital = self.total_capital * self.config.quick_flip_allocation
         self.arbitrage_capital = self.total_capital * self.config.arbitrage_allocation
-        
+        self.crypto_momentum_capital = self.total_capital * self.config.crypto_momentum_allocation
+
         # Initialize strategy modules with actual capital
         self.market_maker = AdvancedMarketMaker(self.db_manager, self.kalshi_client, self.xai_client)
         self.portfolio_optimizer = AdvancedPortfolioOptimizer(self.db_manager, self.kalshi_client, self.xai_client)
-        
-        self.logger.info(f"🎯 CAPITAL ALLOCATION: Market Making=${self.market_making_capital:.2f}, Directional=${self.directional_capital:.2f}, Quick Flip=${self.quick_flip_capital:.2f}, Arbitrage=${self.arbitrage_capital:.2f}")
+
+        # Initialize crypto momentum strategy if enabled
+        self.crypto_price_feed = None
+        self.crypto_momentum_strategy = None
+
+        try:
+            from src.clients.crypto_price_feed_client import CryptoPriceFeedClient
+            from src.strategies.crypto_momentum import CryptoMomentumStrategy
+            from src.config.crypto_momentum_config import CryptoMomentumStrategyConfig
+
+            crypto_config = CryptoMomentumStrategyConfig()
+            if crypto_config.enabled:
+                self.crypto_price_feed = CryptoPriceFeedClient()
+                await self.crypto_price_feed.connect_all_exchanges(crypto_config.symbols)
+
+                self.crypto_momentum_strategy = CryptoMomentumStrategy(
+                    config=crypto_config,
+                    db_manager=self.db_manager,
+                    kalshi_client=self.kalshi_client,
+                    price_feed_client=self.crypto_price_feed
+                )
+
+                self.logger.info("✅ Crypto momentum strategy initialized")
+        except Exception as e:
+            self.logger.warning(f"Crypto momentum strategy initialization failed: {e}")
+
+        self.logger.info(
+            f"🎯 CAPITAL ALLOCATION: "
+            f"Market Making=${self.market_making_capital:.2f}, "
+            f"Directional=${self.directional_capital:.2f}, "
+            f"Quick Flip=${self.quick_flip_capital:.2f}, "
+            f"Arbitrage=${self.arbitrage_capital:.2f}, "
+            f"Crypto Momentum=${self.crypto_momentum_capital:.2f}"
+        )
 
     async def execute_unified_trading_strategy(self) -> TradingSystemResults:
         """
@@ -257,30 +297,35 @@ class UnifiedAdvancedTradingSystem:
                 if enforcement_result['action'] == 'positions_closed':
                     self.logger.info(f"✅ CLOSED {enforcement_result['positions_closed']} positions to meet limits")
             
-            # Step 1: Get ALL available markets (no time restrictions) - MORE PERMISSIVE VOLUME
+            # Step 1: Get ALL available markets (no time restrictions)
             markets = await self.db_manager.get_eligible_markets(
-            volume_min=200,  # DECREASED: Much lower volume requirement (was 50,000, now 200) for more opportunities
-            max_days_to_expiry=365  # Accept any timeline with dynamic exits
-        )
+                volume_min=200,
+                max_days_to_expiry=365  # Accept any timeline with dynamic exits
+            )
             if not markets:
                 self.logger.warning("No markets available for trading")
                 return TradingSystemResults()
-            
-            self.logger.info(f"Analyzing {len(markets)} markets across all strategies")
+
+            # Shuffle markets to avoid always analyzing the same ones first
+            import random
+            random.shuffle(markets)
+
+            self.logger.info(f"Analyzing {len(markets)} markets across all strategies (shuffled for diversity)")
             
             # Step 2: Parallel strategy analysis
-            market_making_results, portfolio_allocation, quick_flip_results = await asyncio.gather(
+            market_making_results, portfolio_allocation, quick_flip_results, crypto_momentum_results = await asyncio.gather(
                 self._execute_market_making_strategy(markets),
                 self._execute_directional_trading_strategy(markets),
-                self._execute_quick_flip_strategy(markets)
+                self._execute_quick_flip_strategy(markets),
+                self._execute_crypto_momentum_strategy()
             )
-            
+
             # Step 3: Execute arbitrage opportunities
             arbitrage_results = await self._execute_arbitrage_strategy(markets)
-            
+
             # Step 4: Compile results
             results = self._compile_unified_results(
-                market_making_results, portfolio_allocation, quick_flip_results, arbitrage_results
+                market_making_results, portfolio_allocation, quick_flip_results, arbitrage_results, crypto_momentum_results
             )
             
             # Step 4.5: Log if no positions were created (removed emergency fallback)
@@ -543,11 +588,11 @@ class UnifiedAdvancedTradingSystem:
                     # FIXED: Extract from nested 'market' object
                     market_info = market_data.get('market', {})
                     
-                    # Get price for the intended side (already determined above)
-                    if intended_side == "YES":
-                        price = market_info.get('yes_price', 50) / 100
-                    else:
-                        price = market_info.get('no_price', 50) / 100
+                    # Get price for the intended side using proper API field names
+                    price = get_market_price_dollars(market_info, intended_side.lower())
+                    if price <= 0:
+                        self.logger.warning(f"No valid price for {market_id} {intended_side}, skipping")
+                        continue
                     
                     # Calculate quantity
                     quantity = max(1, int(position_value / price))
@@ -613,7 +658,7 @@ class UnifiedAdvancedTradingSystem:
                         results['successful_executions'] += 1
                         results['positions_created'] += 1
                         results['total_capital_used'] += position_value
-                        self.logger.info(f"✅ Executed position: {market_id} {side} {quantity} at {price:.3f}")
+                        self.logger.info(f"✅ Executed position: {market_id} {intended_side} {quantity} at {price:.3f}")
                     else:
                         results['failed_executions'] += 1
                         self.logger.error(f"❌ Failed to execute position for {market_id}")
@@ -651,37 +696,93 @@ class UnifiedAdvancedTradingSystem:
             self.logger.error(f"Error in arbitrage strategy: {e}")
             return {'arbitrage_trades': 0, 'arbitrage_profit': 0.0}
 
+    async def _execute_crypto_momentum_strategy(self) -> Dict:
+        """
+        Execute cryptocurrency momentum arbitrage strategy.
+
+        This strategy monitors BTC/ETH price momentum leading up to hourly market close
+        and enters positions when strong directional trends are detected.
+        """
+        try:
+            if self.crypto_momentum_strategy is None:
+                self.logger.info("Crypto momentum strategy not enabled")
+                return {
+                    'positions_created': 0,
+                    'total_capital_used': 0.0,
+                    'expected_profit': 0.0,
+                    'avg_confidence': 0.0
+                }
+
+            self.logger.info(f"🪙 Executing Crypto Momentum Strategy with ${self.crypto_momentum_capital:.2f}")
+
+            # Execute strategy
+            results = await self.crypto_momentum_strategy.execute_crypto_momentum_trades(
+                available_capital=self.crypto_momentum_capital
+            )
+
+            self.logger.info(
+                f"🪙 Crypto Momentum: {results.positions_created} positions created, "
+                f"${results.total_capital_used:.2f} used, "
+                f"${results.expected_profit:.2f} expected profit, "
+                f"avg confidence: {results.avg_confidence:.2%}"
+            )
+
+            return {
+                'positions_created': results.positions_created,
+                'total_capital_used': results.total_capital_used,
+                'expected_profit': results.expected_profit,
+                'avg_confidence': results.avg_confidence
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error in crypto momentum strategy: {e}", exc_info=True)
+            return {
+                'positions_created': 0,
+                'total_capital_used': 0.0,
+                'expected_profit': 0.0,
+                'avg_confidence': 0.0
+            }
+
     def _compile_unified_results(
-        self, 
-        market_making_results: Dict, 
+        self,
+        market_making_results: Dict,
         portfolio_allocation: PortfolioAllocation,
         quick_flip_results: Dict,
-        arbitrage_results: Dict
+        arbitrage_results: Dict,
+        crypto_momentum_results: Dict
     ) -> TradingSystemResults:
         """
         Compile results from all strategies into unified metrics.
         """
         try:
+            # Extract crypto momentum metrics
+            crypto_exposure = crypto_momentum_results.get('total_capital_used', 0.0)
+            crypto_positions = crypto_momentum_results.get('positions_created', 0)
+            crypto_expected_profit = crypto_momentum_results.get('expected_profit', 0.0)
+
             # Calculate total metrics
             total_capital_used = (
                 market_making_results.get('total_exposure', 0) +
                 portfolio_allocation.total_capital_used +
                 quick_flip_results.get('total_capital_used', 0) +
-                arbitrage_results.get('arbitrage_exposure', 0)
+                arbitrage_results.get('arbitrage_exposure', 0) +
+                crypto_exposure
             )
-            
+
             # Weight expected returns by capital allocation
             mm_weight = market_making_results.get('total_exposure', 0) / (total_capital_used + 1e-8)
             dir_weight = portfolio_allocation.total_capital_used / (total_capital_used + 1e-8)
             qf_weight = quick_flip_results.get('total_capital_used', 0) / (total_capital_used + 1e-8)
             arb_weight = arbitrage_results.get('arbitrage_exposure', 0) / (total_capital_used + 1e-8)
-            
+            crypto_weight = crypto_exposure / (total_capital_used + 1e-8)
+
             # Portfolio expected return (weighted average)
             portfolio_expected_return = (
                 mm_weight * market_making_results.get('expected_profit', 0) +
                 dir_weight * portfolio_allocation.expected_portfolio_return +
                 qf_weight * quick_flip_results.get('expected_profit', 0) +
-                arb_weight * arbitrage_results.get('arbitrage_profit', 0)
+                arb_weight * arbitrage_results.get('arbitrage_profit', 0) +
+                crypto_weight * crypto_expected_profit
             )
             
             # Annualize expected return (assume positions held for 30 days average)
@@ -695,31 +796,37 @@ class UnifiedAdvancedTradingSystem:
                 market_making_results.get('orders_placed', 0) // 2 +  # 2 orders per position
                 len(portfolio_allocation.allocations) +
                 quick_flip_results.get('positions_created', 0) +
-                arbitrage_results.get('arbitrage_trades', 0)
+                arbitrage_results.get('arbitrage_trades', 0) +
+                crypto_positions
             )
-            
+
             return TradingSystemResults(
                 # Market making
                 market_making_orders=market_making_results.get('orders_placed', 0),
                 market_making_exposure=market_making_results.get('total_exposure', 0),
                 market_making_expected_profit=market_making_results.get('expected_profit', 0),
-                
+
                 # Directional trading
                 directional_positions=len(portfolio_allocation.allocations),
                 directional_exposure=portfolio_allocation.total_capital_used,
                 directional_expected_return=portfolio_allocation.expected_portfolio_return,
-                
+
+                # Crypto momentum
+                crypto_momentum_positions=crypto_positions,
+                crypto_momentum_exposure=crypto_exposure,
+                crypto_momentum_expected_profit=crypto_expected_profit,
+
                 # Portfolio metrics
                 total_capital_used=total_capital_used,
                 portfolio_expected_return=portfolio_expected_return,
                 portfolio_sharpe_ratio=portfolio_allocation.portfolio_sharpe,
                 portfolio_volatility=portfolio_allocation.portfolio_volatility,
-                
+
                 # Risk metrics
                 max_portfolio_drawdown=portfolio_allocation.max_portfolio_drawdown,
                 correlation_score=1.0 - portfolio_allocation.diversification_ratio,
                 diversification_ratio=portfolio_allocation.diversification_ratio,
-                
+
                 # Performance
                 total_positions=total_positions,
                 capital_efficiency=capital_efficiency,
@@ -798,6 +905,16 @@ class UnifiedAdvancedTradingSystem:
         except Exception as e:
             self.logger.error(f"Error getting performance summary: {e}")
             return {}
+
+    async def close(self):
+        """Cleanup resources"""
+        try:
+            # Close crypto price feed WebSockets
+            if self.crypto_price_feed:
+                await self.crypto_price_feed.close()
+                self.logger.info("✅ Crypto price feed connections closed")
+        except Exception as e:
+            self.logger.error(f"Error closing resources: {e}")
 
 
 async def run_unified_trading_system(

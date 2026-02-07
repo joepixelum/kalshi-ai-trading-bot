@@ -27,9 +27,11 @@ async def process_and_queue_markets(
     """
     markets_to_upsert = []
     for market_data in markets_data:
-        # A simple approach is to take the average of bid and ask.
-        yes_price = (market_data.get("yes_bid", 0) + market_data.get("yes_ask", 0)) / 2
-        no_price = (market_data.get("no_bid", 0) + market_data.get("no_ask", 0)) / 2
+        # Use the market_price utility for consistent price extraction
+        from src.utils.market_price import get_both_prices_cents
+        yes_price_cents, no_price_cents = get_both_prices_cents(market_data)
+        yes_price = yes_price_cents  # Keep in cents, will divide by 100 below
+        no_price = no_price_cents
 
         volume = int(market_data.get("volume", 0))
 
@@ -46,7 +48,7 @@ async def process_and_queue_markets(
                     market_data["expiration_time"].replace("Z", "+00:00")
                 ).timestamp()
             ),
-            category=market_data["category"],
+            category=market_data.get("category", "Unknown"),
             status=market_data["status"],
             last_updated=datetime.now(),
             has_position=has_position,
