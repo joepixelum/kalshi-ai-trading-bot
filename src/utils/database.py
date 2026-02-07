@@ -439,17 +439,34 @@ class DatabaseManager(TradingLoggerMixin):
             await db.commit()
             self.logger.info(f"Upserted {len(markets)} markets.")
 
-    async def get_eligible_markets(self, volume_min: int, max_days_to_expiry: int) -> List[Market]:
+    async def get_eligible_markets(
+        self,
+        volume_min: int,
+        max_days_to_expiry: int,
+        min_probability: float = None,
+        max_probability: float = None
+    ) -> List[Market]:
         """
         Get markets that are eligible for trading.
 
         Args:
             volume_min: Minimum trading volume.
             max_days_to_expiry: Maximum days to expiration.
-        
+            min_probability: Minimum market probability (0.0-1.0). Defaults to settings value.
+            max_probability: Maximum market probability (0.0-1.0). Defaults to settings value.
+                            Markets above this are thinly traded and hard to execute.
+
         Returns:
             A list of eligible markets.
         """
+        from src.config.settings import settings
+
+        # Use settings defaults if not specified
+        if min_probability is None:
+            min_probability = settings.trading.min_market_probability
+        if max_probability is None:
+            max_probability = settings.trading.max_market_probability
+
         now_ts = int(datetime.now().timestamp())
         max_expiry_ts = now_ts + (max_days_to_expiry * 24 * 60 * 60)
 
@@ -462,15 +479,22 @@ class DatabaseManager(TradingLoggerMixin):
                     expiration_ts > ? AND
                     expiration_ts <= ? AND
                     status = 'active' AND
-                    has_position = 0
-            """, (volume_min, now_ts, max_expiry_ts))
+                    has_position = 0 AND
+                    yes_price >= ? AND
+                    yes_price <= ?
+            """, (volume_min, now_ts, max_expiry_ts, min_probability, max_probability))
             rows = await cursor.fetchall()
-            
+
             markets = []
             for row in rows:
                 market_dict = dict(row)
                 market_dict['last_updated'] = datetime.fromisoformat(market_dict['last_updated'])
                 markets.append(Market(**market_dict))
+
+            self.logger.debug(
+                f"Found {len(markets)} eligible markets (vol>={volume_min}, "
+                f"prob {min_probability:.0%}-{max_probability:.0%})"
+            )
             return markets
 
     async def get_markets_with_positions(self) -> set[str]:

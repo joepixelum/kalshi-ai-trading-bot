@@ -136,11 +136,14 @@ class AdvancedMarketMaker:
                     market_info = market_data
 
                 from src.utils.market_price import get_market_price_dollars, get_both_prices_cents
+                from src.config.settings import settings
                 current_yes_price = get_market_price_dollars(market_info, "yes")
                 current_no_price = get_market_price_dollars(market_info, "no")
 
-                # Skip if prices are extreme or missing
-                if current_yes_price < 0.01 or current_yes_price > 0.99:
+                # Skip if prices are extreme or missing (thinly traded, hard to execute)
+                min_prob = settings.trading.min_market_probability
+                max_prob = settings.trading.max_market_probability
+                if current_yes_price < min_prob or current_yes_price > max_prob:
                     continue
                 
                 # Get AI prediction for edge calculation with full market context

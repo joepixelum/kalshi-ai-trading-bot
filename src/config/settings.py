@@ -7,9 +7,100 @@ import os
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
+from enum import IntEnum
 
 # Load environment variables
 load_dotenv()
+
+
+# =============================================================================
+# RISK LEVEL SYSTEM (1-5)
+# =============================================================================
+# Level 1: Ultra Conservative - Minimal risk, few trades, high confidence required
+# Level 2: Conservative - Low risk, selective trades
+# Level 3: Moderate - Balanced risk/reward (DEFAULT)
+# Level 4: Aggressive - Higher risk, more trades, lower thresholds
+# Level 5: Ultra Aggressive - Maximum risk tolerance, trade frequently
+
+class RiskLevel(IntEnum):
+    ULTRA_CONSERVATIVE = 1
+    CONSERVATIVE = 2
+    MODERATE = 3
+    AGGRESSIVE = 4
+    ULTRA_AGGRESSIVE = 5
+
+
+# Risk profile presets - each level adjusts key trading parameters
+RISK_PROFILES = {
+    RiskLevel.ULTRA_CONSERVATIVE: {
+        "max_position_size_pct": 2.0,
+        "max_daily_loss_pct": 5.0,
+        "max_positions": 5,
+        "min_confidence_to_trade": 0.75,
+        "kelly_fraction": 0.25,
+        "max_single_position": 0.02,
+        "min_trade_edge": 0.20,
+        "max_trades_per_hour": 10,
+        "profit_threshold": 0.30,
+        "loss_threshold": 0.08,
+        "daily_ai_budget": 8.0,
+    },
+    RiskLevel.CONSERVATIVE: {
+        "max_position_size_pct": 3.0,
+        "max_daily_loss_pct": 8.0,
+        "max_positions": 8,
+        "min_confidence_to_trade": 0.65,
+        "kelly_fraction": 0.40,
+        "max_single_position": 0.03,
+        "min_trade_edge": 0.15,
+        "max_trades_per_hour": 20,
+        "profit_threshold": 0.25,
+        "loss_threshold": 0.10,
+        "daily_ai_budget": 12.0,
+    },
+    RiskLevel.MODERATE: {
+        "max_position_size_pct": 5.0,
+        "max_daily_loss_pct": 12.0,
+        "max_positions": 12,
+        "min_confidence_to_trade": 0.55,
+        "kelly_fraction": 0.55,
+        "max_single_position": 0.04,
+        "min_trade_edge": 0.10,
+        "max_trades_per_hour": 30,
+        "profit_threshold": 0.22,
+        "loss_threshold": 0.12,
+        "daily_ai_budget": 15.0,
+    },
+    RiskLevel.AGGRESSIVE: {
+        "max_position_size_pct": 6.0,
+        "max_daily_loss_pct": 15.0,
+        "max_positions": 15,
+        "min_confidence_to_trade": 0.50,
+        "kelly_fraction": 0.70,
+        "max_single_position": 0.05,
+        "min_trade_edge": 0.08,
+        "max_trades_per_hour": 40,
+        "profit_threshold": 0.20,
+        "loss_threshold": 0.15,
+        "daily_ai_budget": 20.0,
+    },
+    RiskLevel.ULTRA_AGGRESSIVE: {
+        "max_position_size_pct": 8.0,
+        "max_daily_loss_pct": 20.0,
+        "max_positions": 20,
+        "min_confidence_to_trade": 0.45,
+        "kelly_fraction": 0.85,
+        "max_single_position": 0.07,
+        "min_trade_edge": 0.05,
+        "max_trades_per_hour": 60,
+        "profit_threshold": 0.15,
+        "loss_threshold": 0.18,
+        "daily_ai_budget": 30.0,
+    },
+}
+
+# Current risk level - can be set via environment variable or startup script
+CURRENT_RISK_LEVEL = int(os.getenv("TRADING_RISK_LEVEL", "3"))
 
 
 @dataclass
@@ -71,6 +162,11 @@ class TradingConfig:
     high_confidence_threshold: float = 0.95  # LLM confidence needed
     high_confidence_market_odds: float = 0.90 # Market price to look for
     high_confidence_expiry_hours: int = 24   # Max hours until expiry
+
+    # Market probability filtering - exclude extreme probability markets
+    # Markets above this probability are thinly traded and hard to execute
+    max_market_probability: float = 0.95  # Exclude markets with >95% implied probability
+    min_market_probability: float = 0.05  # Exclude markets with <5% implied probability
 
     # AI trading criteria - MORE PERMISSIVE
     max_analysis_cost_per_decision: float = 0.15  # INCREASED: Allow higher cost per decision (was 0.10, now 0.15)
@@ -210,26 +306,80 @@ class Settings:
     api: APIConfig = field(default_factory=APIConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    
+    risk_level: int = field(default_factory=lambda: CURRENT_RISK_LEVEL)
+
     def validate(self) -> bool:
         """Validate configuration settings."""
         if not self.api.kalshi_api_key:
             raise ValueError("KALSHI_API_KEY environment variable is required")
-        
+
         if not self.api.xai_api_key:
             raise ValueError("XAI_API_KEY environment variable is required")
-        
+
         if self.trading.max_position_size_pct <= 0 or self.trading.max_position_size_pct > 100:
             raise ValueError("max_position_size_pct must be between 0 and 100")
-        
+
         if self.trading.min_confidence_to_trade <= 0 or self.trading.min_confidence_to_trade > 1:
             raise ValueError("min_confidence_to_trade must be between 0 and 1")
-        
+
         return True
+
+    def apply_risk_level(self, level: int) -> None:
+        """
+        Apply a risk level (1-5) to adjust trading parameters.
+
+        Level 1: Ultra Conservative - Minimal risk, few trades
+        Level 2: Conservative - Low risk, selective trades
+        Level 3: Moderate - Balanced risk/reward (DEFAULT)
+        Level 4: Aggressive - Higher risk, more trades
+        Level 5: Ultra Aggressive - Maximum risk tolerance
+        """
+        if level < 1 or level > 5:
+            raise ValueError(f"Risk level must be 1-5, got {level}")
+
+        self.risk_level = level
+        risk_level_enum = RiskLevel(level)
+        profile = RISK_PROFILES[risk_level_enum]
+
+        # Apply profile settings to TradingConfig
+        self.trading.max_position_size_pct = profile["max_position_size_pct"]
+        self.trading.max_daily_loss_pct = profile["max_daily_loss_pct"]
+        self.trading.max_positions = profile["max_positions"]
+        self.trading.min_confidence_to_trade = profile["min_confidence_to_trade"]
+        self.trading.kelly_fraction = profile["kelly_fraction"]
+        self.trading.max_single_position = profile["max_single_position"]
+        self.trading.max_trades_per_hour = profile["max_trades_per_hour"]
+        self.trading.daily_ai_budget = profile["daily_ai_budget"]
+
+        # Also update module-level settings
+        global min_trade_edge, profit_threshold, loss_threshold, daily_ai_budget
+        min_trade_edge = profile["min_trade_edge"]
+        profit_threshold = profile["profit_threshold"]
+        loss_threshold = profile["loss_threshold"]
+        daily_ai_budget = profile["daily_ai_budget"]
+
+    def get_risk_level_name(self) -> str:
+        """Get human-readable name for current risk level."""
+        names = {
+            1: "Ultra Conservative",
+            2: "Conservative",
+            3: "Moderate",
+            4: "Aggressive",
+            5: "Ultra Aggressive"
+        }
+        return names.get(self.risk_level, "Unknown")
 
 
 # Global settings instance
 settings = Settings()
+
+# Apply risk level from environment on startup
+try:
+    settings.apply_risk_level(CURRENT_RISK_LEVEL)
+    print(f"🎚️  Risk Level: {CURRENT_RISK_LEVEL} ({settings.get_risk_level_name()})")
+except ValueError as e:
+    print(f"Invalid risk level: {e}, using default (3)")
+    settings.apply_risk_level(3)
 
 # Validate settings on import
 try:

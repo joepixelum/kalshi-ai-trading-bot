@@ -14,6 +14,9 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Default risk level (1-5, default is 3 = Moderate)
+RISK_LEVEL="${1:-3}"
+
 # Process IDs for cleanup
 BOT_PID=""
 DASHBOARD_PID=""
@@ -67,9 +70,56 @@ print_info() {
     echo -e "${CYAN}ℹ️  $1${NC}"
 }
 
+# Risk level names
+get_risk_level_name() {
+    case $1 in
+        1) echo "Ultra Conservative" ;;
+        2) echo "Conservative" ;;
+        3) echo "Moderate" ;;
+        4) echo "Aggressive" ;;
+        5) echo "Ultra Aggressive" ;;
+        *) echo "Unknown" ;;
+    esac
+}
+
+# Display usage
+show_usage() {
+    echo ""
+    echo -e "${CYAN}Usage: $0 [RISK_LEVEL]${NC}"
+    echo ""
+    echo "RISK_LEVEL (1-5):"
+    echo "  1 = Ultra Conservative - Minimal risk, few trades, high confidence required"
+    echo "  2 = Conservative       - Low risk, selective trades"
+    echo "  3 = Moderate           - Balanced risk/reward (DEFAULT)"
+    echo "  4 = Aggressive         - Higher risk, more trades, lower thresholds"
+    echo "  5 = Ultra Aggressive   - Maximum risk tolerance, trade frequently"
+    echo ""
+    echo "Examples:"
+    echo "  $0       # Runs with risk level 3 (Moderate)"
+    echo "  $0 2     # Runs with risk level 2 (Conservative)"
+    echo "  $0 4     # Runs with risk level 4 (Aggressive)"
+    echo ""
+}
+
 # Main launcher
 main() {
+    # Validate risk level
+    if [[ "$RISK_LEVEL" == "-h" || "$RISK_LEVEL" == "--help" ]]; then
+        show_usage
+        exit 0
+    fi
+
+    if ! [[ "$RISK_LEVEL" =~ ^[1-5]$ ]]; then
+        print_error "Invalid risk level: $RISK_LEVEL (must be 1-5)"
+        show_usage
+        exit 1
+    fi
+
+    RISK_NAME=$(get_risk_level_name $RISK_LEVEL)
+
     print_header "🚀 Kalshi Trading System Launcher"
+    echo -e "${PURPLE}🎚️  Risk Level: $RISK_LEVEL ($RISK_NAME)${NC}"
+    echo ""
 
     # Get script directory and change to it
     SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -121,7 +171,10 @@ main() {
     set -a  # Automatically export all variables
     source .env
     set +a
-    print_success "Environment variables loaded"
+
+    # Export risk level for Python to pick up
+    export TRADING_RISK_LEVEL="$RISK_LEVEL"
+    print_success "Environment variables loaded (Risk Level: $RISK_LEVEL)"
 
     # Step 5: Install dependencies
     print_info "Checking dependencies..."
@@ -193,6 +246,7 @@ asyncio.run(main())
 
     # Step 9: Monitor processes
     print_header "System Running - Press Ctrl+C to stop"
+    echo -e "${PURPLE}🎚️  Risk Level: $RISK_LEVEL ($RISK_NAME)${NC}"
     print_info "Trading bot PID: $BOT_PID"
     print_info "Dashboard PID: $DASHBOARD_PID"
     print_info "Trading bot logs: logs/latest.log"

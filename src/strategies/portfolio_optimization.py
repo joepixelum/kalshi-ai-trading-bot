@@ -907,8 +907,11 @@ async def create_market_opportunities_from_markets(
 
             market_prob = yes_cents / 100.0
 
-            # Skip markets with extreme prices (too risky for portfolio)
-            if market_prob < 0.01 or market_prob > 0.99:
+            # Skip markets with extreme prices (thinly traded, hard to execute)
+            min_prob = settings.trading.min_market_probability
+            max_prob = settings.trading.max_market_probability
+            if market_prob < min_prob or market_prob > max_prob:
+                logger.debug(f"Skipping {market.market_id}: probability {market_prob:.1%} outside {min_prob:.0%}-{max_prob:.0%} range")
                 continue
 
             # Get REAL AI prediction using fast analysis with full market context
