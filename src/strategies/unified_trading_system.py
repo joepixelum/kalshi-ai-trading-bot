@@ -364,9 +364,18 @@ class UnifiedAdvancedTradingSystem:
                 return {'orders_placed': 0, 'expected_profit': 0.0}
             
             # Filter to top opportunities within capital allocation
-            max_opportunities = int(self.market_making_capital / 100)  # $100 per opportunity
+            # Apply both capital-based limit and hard throttle to prevent strategy dominance
+            capital_based_limit = int(self.market_making_capital / 100)  # $100 per opportunity
+            throttle_limit = getattr(settings, 'max_market_making_per_cycle', 2)  # Hard cap per cycle
+            max_opportunities = min(capital_based_limit, throttle_limit)
+
+            self.logger.info(
+                f"🎛️ Market Making throttle: {len(opportunities)} found, "
+                f"executing top {max_opportunities} (capital limit: {capital_based_limit}, throttle: {throttle_limit})"
+            )
+
             top_opportunities = opportunities[:max_opportunities]
-            
+
             # Execute market making
             results = await self.market_maker.execute_market_making_strategy(top_opportunities)
             

@@ -252,6 +252,7 @@ min_spread_for_making: float = 0.01     # DECREASED: Accept smaller spreads (was
 max_inventory_risk: float = 0.15        # INCREASED: Allow higher inventory risk (was 0.10, now 15%)
 order_refresh_minutes: int = 15         # Refresh orders every 15 minutes
 max_orders_per_market: int = 4          # Maximum orders per market (2 each side)
+max_market_making_per_cycle: int = 2    # THROTTLE: Max market making opportunities per cycle (prevents dominance)
 
 # === CRYPTO MOMENTUM STRATEGY ===
 # Settings for cryptocurrency momentum arbitrage
