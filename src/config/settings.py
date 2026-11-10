@@ -55,11 +55,11 @@ class TradingConfig:
     kelly_fraction: float = 0.75            # INCREASED: More aggressive Kelly multiplier (was 0.5, now 0.75)
     max_single_position: float = 0.05       # INCREASED: Higher position cap (was 0.03, now 5%)
     
-    # Trading frequency - MORE FREQUENT
-    market_scan_interval: int = 30          # DECREASED: Scan every 30 seconds (was 60)
-    position_check_interval: int = 15       # DECREASED: Check positions every 15 seconds (was 30)
-    max_trades_per_hour: int = 20           # INCREASED: Allow more trades per hour (was 10, now 20)
-    run_interval_minutes: int = 10          # DECREASED: Run more frequently (was 15, now 10)
+    # Trading frequency - VERY AGGRESSIVE
+    market_scan_interval: int = 15          # VERY FAST: Scan every 15 seconds (was 30)
+    position_check_interval: int = 10       # VERY FAST: Check positions every 10 seconds (was 15)
+    max_trades_per_hour: int = 40           # VERY HIGH: Allow many more trades per hour (was 20, now 40)
+    run_interval_minutes: int = 5           # VERY FREQUENT: Run every 5 minutes (was 10)
     num_processor_workers: int = 5      # Number of concurrent market processor workers
     
     # Market selection preferences
@@ -76,11 +76,11 @@ class TradingConfig:
     max_analysis_cost_per_decision: float = 0.15  # INCREASED: Allow higher cost per decision (was 0.10, now 0.15)
     min_confidence_threshold: float = 0.45  # DECREASED: Lower confidence threshold (was 0.55, now 0.45)
 
-    # Cost control and market analysis frequency - MORE PERMISSIVE
-    daily_ai_budget: float = 10.0  # INCREASED: Higher daily budget (was 5.0, now 10.0)
-    max_ai_cost_per_decision: float = 0.08  # INCREASED: Higher per-decision cost (was 0.05, now 0.08)
-    analysis_cooldown_hours: int = 3  # DECREASED: Shorter cooldown (was 6, now 3)
-    max_analyses_per_market_per_day: int = 4  # INCREASED: More analyses per day (was 2, now 4)
+    # Cost control and market analysis frequency - VERY PERMISSIVE FOR MORE TRADES
+    daily_ai_budget: float = 20.0  # AGGRESSIVE: Much higher daily budget (was 10.0, now 20.0)
+    max_ai_cost_per_decision: float = 0.12  # HIGHER: Allow more expensive analyses (was 0.08, now 0.12)
+    analysis_cooldown_hours: int = 1  # VERY SHORT: Re-analyze markets hourly (was 3, now 1)
+    max_analyses_per_market_per_day: int = 10  # VERY HIGH: Many re-analyses per day (was 4, now 10)
     
     # Daily AI spending limits - SAFETY CONTROLS
     daily_ai_cost_limit: float = 50.0  # Maximum daily spending on AI API calls (USD)
@@ -111,9 +111,12 @@ class LoggingConfig:
 
 # === CAPITAL ALLOCATION ACROSS STRATEGIES ===
 # Allocate capital across different trading approaches
-market_making_allocation: float = 0.40  # 40% for market making (spread profits)
-directional_allocation: float = 0.50    # 50% for directional trading (AI predictions) 
-arbitrage_allocation: float = 0.10      # 10% for arbitrage opportunities
+# UPDATED: Rebalanced to accommodate new crypto momentum strategy
+market_making_allocation: float = 0.32     # 32% for market making (spread profits) - was 40%
+directional_allocation: float = 0.40       # 40% for directional trading (AI predictions) - was 50%
+quick_flip_allocation: float = 0.24        # 24% for quick flip scalping - was 30%
+arbitrage_allocation: float = 0.08         # 8% for arbitrage opportunities - was 10%
+crypto_momentum_allocation: float = 0.20   # 20% for crypto momentum arbitrage - NEW
 
   # === PORTFOLIO OPTIMIZATION SETTINGS ===
 # Kelly Criterion is now the PRIMARY position sizing method (moved to TradingConfig)
@@ -153,6 +156,17 @@ min_spread_for_making: float = 0.01     # DECREASED: Accept smaller spreads (was
 max_inventory_risk: float = 0.15        # INCREASED: Allow higher inventory risk (was 0.10, now 15%)
 order_refresh_minutes: int = 15         # Refresh orders every 15 minutes
 max_orders_per_market: int = 4          # Maximum orders per market (2 each side)
+
+# === CRYPTO MOMENTUM STRATEGY ===
+# Settings for cryptocurrency momentum arbitrage
+crypto_momentum_enabled: bool = True    # Enable crypto momentum strategy
+crypto_momentum_symbols: List[str] = ["BTC", "ETH"]  # Symbols to track
+crypto_momentum_min_confidence: float = 0.70  # Minimum confidence threshold (70%)
+crypto_momentum_entry_window_sec: int = 60   # Enter 60 seconds before hour close
+crypto_momentum_max_positions: int = 8       # Max concurrent crypto positions
+crypto_momentum_win_rate_kill_switch: float = 0.65  # Disable if win rate < 65%
+crypto_momentum_max_daily_loss_pct: float = 0.10    # Stop if lose 10% in a day
+crypto_momentum_scan_interval_sec: int = 5   # Check markets every 5 seconds
 
 # === MARKET SELECTION (ENHANCED FOR MORE OPPORTUNITIES) ===
 # Removed time restrictions - trade ANY deadline with dynamic exits!

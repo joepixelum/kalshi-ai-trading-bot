@@ -184,9 +184,10 @@ async def run_tracking(db_manager: Optional[DatabaseManager] = None):
                     logger.warning(f"Could not retrieve market data for {position.market_id}. Skipping.")
                     continue
 
-                # Get current prices
-                current_yes_price = market_data.get('yes_price', 0) / 100  # Convert cents to dollars
-                current_no_price = market_data.get('no_price', 0) / 100
+                # Get current prices using proper API field names
+                from src.utils.market_price import get_market_price_dollars
+                current_yes_price = get_market_price_dollars(market_data, "yes")
+                current_no_price = get_market_price_dollars(market_data, "no")
                 market_status = market_data.get('status', 'unknown')
                 market_result = market_data.get('result')  # Market resolution result
                 
